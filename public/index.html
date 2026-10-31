@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NETPIE Robot Dashboard</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#0b1220;color:#edf2ff;font:16px system-ui,Arial,sans-serif;padding:20px}
+main{max-width:850px;margin:auto}h1{font-size:1.7rem;margin-bottom:.3rem}.sub{color:#9bb0cc}
+.tags{display:flex;gap:9px;flex-wrap:wrap;margin:14px 0 22px}.tag{padding:8px 12px;background:#293447;border-radius:20px}.ok{background:#185838}.bad{background:#703030}
+section{background:#19263a;border-radius:18px;padding:22px;margin:18px 0}h2{margin-top:0}
+.login{display:flex;gap:10px;flex-wrap:wrap}input{padding:12px;border-radius:10px;border:1px solid #6e7d99;background:#0f1929;color:white;min-width:0;flex:1;font-size:16px}
+button{cursor:pointer;border:0;border-radius:16px;color:white;background:#2563eb;touch-action:none;user-select:none;-webkit-user-select:none}
+button:focus-visible{outline:3px solid #fef08a;outline-offset:3px}button:disabled{background:#43506a;cursor:not-allowed}.login button{padding:10px 24px}
+.dpad{display:grid;grid-template-columns:repeat(3,minmax(0,83px));grid-template-rows:repeat(3,83px);gap:10px;justify-content:center;margin:24px 0}
+.arrow{font-size:32px;font-weight:bold}.arrow.active{background:#16a34a}.forward{grid-area:1/2}.left{grid-area:2/1}.stop{grid-area:2/2;background:#d13434;font-size:15px}.right{grid-area:2/3}.backward{grid-area:3/2}
+.center{text-align:center}.readings{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.metric{border-radius:13px;padding:15px;background:#2b3a52;min-width:0}
+.label{font-size:.88rem;color:#b4c5e1}.value{font-size:1.6rem;font-weight:bold;margin-top:8px;overflow-wrap:anywhere}.unit{font-size:.78rem;color:#9bb0cc}.hint{font-size:.83rem;color:#9bb0cc}
+@media(max-width:350px){.dpad{grid-template-columns:repeat(3,72px);grid-template-rows:repeat(3,72px)}section{padding:16px}}
+</style>
+</head><body><main>
+<h1>NETPIE Robot Controller</h1><div class="sub">Hosted dashboard · ESP8266 · STM32F411RE</div>
+<div class="tags"><span class="tag bad" id="webStatus">Gateway offline</span><span class="tag bad" id="netpieStatus">NETPIE offline</span><span class="tag bad" id="robotStatus">Robot offline</span></div>
+<section><h2>Connect</h2><div class="login"><input id="password" type="password" placeholder="Dashboard password" autocomplete="current-password"><button id="connect">Connect</button></div><p class="hint">Enter the DASHBOARD_PASSWORD set on your gateway server. Password is not stored by the page.</p></section>
+<section><h2>Movement control</h2><p class="sub">Hold an arrow to move. Release to stop.</p>
+<div class="dpad">
+<button class="arrow forward" data-dir="F" aria-label="Forward" disabled>▲</button>
+<button class="arrow left" data-dir="L" aria-label="Left" disabled>◀</button>
+<button class="arrow stop" id="stop" disabled>STOP</button>
+<button class="arrow right" data-dir="R" aria-label="Right" disabled>▶</button>
+<button class="arrow backward" data-dir="B" aria-label="Backward" disabled>▼</button>
+</div><p class="center">Requested: <strong id="direction">STOP</strong></p><p class="center">STM32 state: <strong id="robotDirection">--</strong></p></section>
+<section><h2>Sensor telemetry</h2><div class="readings">
+<div class="metric"><div class="label">Distance</div><div class="value" id="distance">--</div><div class="unit">cm</div></div>
+<div class="metric"><div class="label">Roll (X)</div><div class="value" id="angle_x">--</div><div class="unit">degrees</div></div>
+<div class="metric"><div class="label">Pitch (Y)</div><div class="value" id="angle_y">--</div><div class="unit">degrees</div></div>
+<div class="metric"><div class="label">Yaw (Z)</div><div class="value" id="angle_z">--</div><div class="unit">degrees</div></div>
+<div class="metric"><div class="label">Battery</div><div class="value" id="battery">--</div><div class="unit">V · not connected yet</div></div>
+<div class="metric"><div class="label">Wi-Fi RSSI</div><div class="value" id="rssi">--</div><div class="unit">dBm</div></div>
+<div class="metric"><div class="label">Uptime</div><div class="value" id="uptime">--</div><div class="unit">seconds</div></div>
+</div></section>
+<p class="hint center">Remote movement is for the LED prototype. Add hardware motor failsafes before real motor operation.</p>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+let socket=null,authenticated=false,broker=false,robot=false,holding=null,pointer=null,holdTimer=null;
+const names={F:'FORWARD',B:'BACKWARD',L:'LEFT',R:'RIGHT',S:'STOP'};
+function active(){return !!socket&&socket.readyState===WebSocket.OPEN&&authenticated&&broker&&robot;}
+function send(message){if(socket?.readyState===WebSocket.OPEN&&authenticated)socket.send(JSON.stringify(message));}
+function badges(){const online=active(); $('webStatus').textContent=authenticated?'Gateway connected':'Gateway offline';$('webStatus').className='tag '+(authenticated?'ok':'bad'); $('netpieStatus').textContent=broker?'NETPIE connected':'NETPIE offline';$('netpieStatus').className='tag '+(broker?'ok':'bad');$('robotStatus').textContent=robot?'Robot online':'Robot offline';$('robotStatus').className='tag '+(robot?'ok':'bad');document.querySelectorAll('.arrow').forEach(b=>b.disabled=!online);$('stop').disabled=!online;}
+function stop(){clearInterval(holdTimer);holdTimer=null;if(holding)holding.classList.remove('active');holding=null;pointer=null;send({type:'stop'});$('direction').textContent='STOP';}
+function clearReadings(){for(const id of ['distance','angle_x','angle_y','angle_z','battery','rssi','uptime'])$(id).textContent='--';$('robotDirection').textContent='--';}
+function connect(){stop();if(socket)socket.close();authenticated=false;broker=false;robot=false;badges();const pass=$('password').value; if(!pass)return;const url=(location.protocol==='https:'?'wss://':'ws://')+location.host+'/control';const ws=new WebSocket(url);socket=ws;ws.addEventListener('open',()=>{ws.send(JSON.stringify({type:'auth',password:pass}));$('password').value='';});ws.addEventListener('message',event=>{if(socket!==ws)return;let m;try{m=JSON.parse(event.data);}catch{return;}if(m.type==='authorized'){authenticated=true;broker=!!m.broker;}if(m.type==='broker')broker=!!m.connected;if(m.type==='health'){broker=!!m.broker;robot=!!m.robotOnline;if(!broker||!robot)stop();}if(m.type==='telemetry'){for(const [key,digits] of Object.entries({distance:2,angle_x:1,angle_y:1,angle_z:1,battery:2,rssi:0,uptime:0})){const n=m[key];$(key).textContent=typeof n==='number'&&Number.isFinite(n)?n.toFixed(digits):'--';}}if(m.type==='robot-state')$('robotDirection').textContent=names[m.direction]||'--';badges();});ws.addEventListener('close',()=>{if(socket!==ws)return;stop();authenticated=false;broker=false;robot=false;badges();clearReadings();});ws.addEventListener('error',()=>console.warn('Gateway WebSocket error'));}
+$('connect').addEventListener('click',connect);$('password').addEventListener('keydown',e=>{if(e.key==='Enter')connect();});
+for(const button of document.querySelectorAll('[data-dir]')){button.addEventListener('pointerdown',e=>{if(!active()||holding||e.pointerType==='mouse'&&e.button!==0)return;e.preventDefault();holding=button;pointer=e.pointerId;button.setPointerCapture(e.pointerId);button.classList.add('active');let direction=button.dataset.dir;send({type:'move',direction});$('direction').textContent=names[direction];holdTimer=setInterval(()=>{if(active()&&holding===button)send({type:'move',direction});else stop();},120);});for(const name of ['pointerup','pointercancel','lostpointercapture'])button.addEventListener(name,e=>{if(holding===button&&pointer===e.pointerId)stop();});button.addEventListener('contextmenu',e=>e.preventDefault());}
+$('stop').addEventListener('pointerdown',e=>{e.preventDefault();stop();});
+window.addEventListener('blur',stop);document.addEventListener('visibilitychange',()=>{if(document.hidden)stop();});window.addEventListener('pagehide',stop);
+badges();
+</script></body></html>

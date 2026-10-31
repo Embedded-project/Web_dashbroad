@@ -1,0 +1,8 @@
+{
+  "name": "netpie-robot-gateway",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {"start": "node server.js"},
+  "engines": {"node": ">=20"},
+  "dependencies": {"dotenv": "^16.4.5", "express": "^4.21.2", "mqtt": "^5.10.4", "ws": "^8.18.0"}
+}
